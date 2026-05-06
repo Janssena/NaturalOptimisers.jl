@@ -1,0 +1,20 @@
+name = "NaturalOptimisers"
+uuid = "baf65090-2b44-4d11-bff8-c4290875b87f"
+version = "0.1.0"
+authors = ["Janssena <alexanderjanssen@live.com>"]
+
+[deps]
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+Functors = "d9f16b24-f501-4c13-a1f2-28368ffc5196"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
+Optimisers = "3bd65402-5787-11e9-1adc-39752487f4e2"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+
+[compat]
+Distributions = "0.25.125"
+Functors = "0.5.2"
+LinearAlgebra = "1.12.0"
+LogExpFunctions = "0.3.29"
+Optimisers = "0.4.7"
+Random = "1.11.0"
