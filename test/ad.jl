@@ -4,6 +4,7 @@ using Random
 using ForwardDiff
 using LinearAlgebra
 using Statistics
+using Optimisers
 
 @testset "Automatic Differentiation Natural Gradient Verification" begin
     rng = Random.MersenneTwister(1234)
@@ -349,4 +350,71 @@ using Statistics
         @test ∇̃m ≈ nat_m_ref rtol=2e-2
         @test ∇̃L ≈ nat_L_ref rtol=2e-2
     end
+end
+
+@testset "IVON Hessian estimator vs ForwardDiff (Price's theorem)" begin
+    # IVON's reparameterised Hessian estimator ĥ = ĝ ⊙ ϵ/σ is, by Price's theorem,
+    # an unbiased estimator of the (expected) diagonal Hessian. We cross-check it
+    # against ForwardDiff: both the gradients fed in and the reference Hessians are
+    # computed by autodiff on a non-quadratic loss (so ∇²ℓ varies with θ).
+    rng = Random.MersenneTwister(99)
+    N = 200_000
+    P = 4
+    Aspd = let M = randn(rng, P, P); M * M' + I end
+    ℓ(θ) = 0.5 * θ' * Aspd * θ + sum(log1p.(exp.(θ)))   # quadratic + softplus (curved)
+    α, λ, β₂ = 1.0, 1.0, 0.999
+
+    rule = IVON(0.1, (0.9, β₂); delta=α, lambda=λ, init_scale=1.0)
+    m = 0.3 .* randn(rng, P)
+    st = Optimisers.init(rule, m)
+    st = (q=(m, st.q[2]), momentum=st.momentum, epsilon=[randn(rng, P) for _ in 1:N])
+
+    σ = @. 1 / sqrt(λ * (st.q[2] + α))
+    θs = [m .+ σ .* ϵ for ϵ in st.epsilon]
+    gs = [ForwardDiff.gradient(ℓ, θ) for θ in θs]
+
+    Ĥ = mean(gs[i] .* st.epsilon[i] ./ σ for i in 1:N)                 # estimator IVON uses
+    hess_ref = mean(diag(ForwardDiff.hessian(ℓ, θ)) for θ in θs)       # Price reference
+    @test Ĥ ≈ hess_ref rtol = 3e-2
+
+    # apply! consumes the autodiff gradients and produces a consistent H update.
+    st2, _ = Optimisers.apply!(rule, st, m, gs)
+    H = st.q[2]
+    H_ref = @. β₂ * H + (1 - β₂) * Ĥ + (1 - β₂)^2 / 2 * (Ĥ - H)^2 / (H + α)
+    @test st2.q[2] ≈ H_ref rtol = 1e-5
+end
+
+@testset "EVON projected Hessian estimator vs ForwardDiff" begin
+    # EVON's estimator Ĥ = (Q_Lᵀ G Q_R) ⊙ Z/√V estimates the diagonal of the projected
+    # Hessian P'(∇²ℓ)P with P = Q_R ⊗ Q_L. On a quadratic matrix loss the Hessian is
+    # constant (= A_R ⊗ A_L), which we obtain from ForwardDiff and project for the reference.
+    rng = Random.MersenneTwister(100)
+    N = 100_000
+    d, k = 3, 2
+    AL = let M = randn(rng, d, d); Symmetric(M * M' + I) end
+    AR = let M = randn(rng, k, k); Symmetric(M * M' + I) end
+    B = randn(rng, d, k)
+    ℓmat(Θ) = 0.5 * tr(AL * Θ * AR * Θ') + tr(B' * Θ)   # ∇ = A_L Θ A_R + B
+    ℓvec(v) = ℓmat(reshape(v, d, k))
+    α, ζ = 1.0, 1.0
+
+    QL = qr(randn(rng, d, d)).Q |> Matrix
+    QR = qr(randn(rng, k, k)).Q |> Matrix
+    rule = EVON(0.3, (0.9, 0.99, 0.95); delta=α, zeta=ζ, init_scale=1.0, precond_freq=10^9)
+    st = Optimisers.init(rule, zeros(d, k))
+    st = (q=st.q, precond=(st.precond[1], st.precond[2], QL, QR),
+        momentum=st.momentum, epsilon=[randn(rng, d, k) for _ in 1:N], t=st.t, shape=st.shape)
+
+    H = st.q[2]
+    sqrtV = @. sqrt(1 / (ζ * (H + α)))
+    Θs = [NaturalOptimisers.sample(rule, st, s) for s in 1:N]
+    Gs = [reshape(ForwardDiff.gradient(ℓvec, vec(Θ)), d, k) for Θ in Θs]
+
+    @test Gs[1] ≈ AL * Θs[1] * AR + B rtol = 1e-6                       # autodiff gradient is correct
+
+    Ĥ = mean((transpose(QL) * Gs[i] * QR) .* st.epsilon[i] ./ sqrtV for i in 1:N)
+    Hess = ForwardDiff.hessian(ℓvec, zeros(d * k))                      # constant Hessian = A_R ⊗ A_L
+    P = kron(QR, QL)
+    proj_diag = reshape(diag(P' * Hess * P), d, k)
+    @test Ĥ ≈ proj_diag rtol = 4e-2
 end

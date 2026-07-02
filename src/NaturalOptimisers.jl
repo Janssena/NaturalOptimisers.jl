@@ -32,4 +32,10 @@ include("lib/riemannian.jl")
 include("lib/euclidian.jl")
 export natgrad, update
 
+include("lib/evon.jl")
+export EVON
+
+include("lib/ivon.jl")
+export IVON
+
 end # module NaturalOptimisers
