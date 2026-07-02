@@ -74,16 +74,19 @@ Perform the parameter update step on the Diagonal Gaussian Lie-Group manifold us
 exponential map for the Affine group.
 
 ### Mathematical Justification:
-The exact coupled exponential map for the diagonal Affine group is (Eq 16/31, Kiral et al., 2023):
-    m_new = m + σ ⊙ [(exp(-η * U) - I) / U] ⊙ (-η * V)
+The exact coupled exponential map for the diagonal Affine group is (Eq 16/17, Kiral et al., 2023):
+    m_new = m + (c_X / c_y) ⊙ σ ⊙ [(exp(-η * U) - 1) / U] ⊙ V
     σ_new = σ ⊙ exp(-η * U)
 
 This mathematically exact coupling prevents overshooting when the scale σ is changing rapidly.
+The constant `c_X / c_y` depends only on the base distribution q₀; for the Gaussian base
+q₀ = N(0, I) used here it evaluates to c_X = E[(1 - θ²)²] = 2 and c_y = E[θ²] = 1, so c_X / c_y = 2.
 """
 function update(o::NaturalDescent{DiagNormal,LieGroupManifold}, m, σ::AbstractArray{T}, V, U) where {T<:Real}
     η = T(o.eta)
-    exp_neg_ηU = exp.(-η .* U)
-    m_new = m + σ .* (exp_neg_ηU .- 1) ./ U .* -η .* V
+    c = T(2) # c_X / c_y for the Gaussian base distribution (Kiral et al., 2023, Eq. 16)
+    exp_neg_ηU = @. exp(-η * U)
+    m_new = @. m + c * σ * (exp_neg_ηU - one(T)) / U * V
     σ_new = σ .* exp_neg_ηU
     return m_new, σ_new
 end
