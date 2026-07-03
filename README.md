@@ -4,6 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 [![Tests](https://img.shields.io/badge/Tests-Passed-success?style=flat-square)](https://github.com/alexander/Postdoc/Projects/NaturalOptimisers.jl)
 
+<img src="scripts/figures/logistic_regression.png" width="450"/>
+
 `NaturalOptimisers.jl` provides **variational learning** optimisers — natural-gradient and Newton-like rules that learn a Gaussian distribution over a model's weights instead of a point estimate. It plugs into the [`Optimisers.jl`](https://github.com/FluxML/Optimisers.jl) ecosystem: the variational distribution $q$ is stored *inside the optimiser state*, so any existing model becomes a Bayesian one without changing its structure.
 
 ## Optimisers

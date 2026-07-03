@@ -143,17 +143,17 @@ function main()
         size=(680, 620), legend=:bottomright)
 
     for (m, Σ, lab, col, ls, lw) in (
-        (m_exact, Σ_exact, "Exact (full Gaussian)", :black, :dot, 4.0),
-        (m_evon, Σ_evon, "EVON", :red, :solid, 2.2),
-        (m_nd, Σ_nd, "NaturalDescent (Lie)", :limegreen, :dash, 2.2),
-        (m_ivon, Σ_ivon, "IVON", :deepskyblue, :solid, 2.6),
+        (m_exact, Σ_exact, "Exact (full Gaussian)", :black, :dot, 5.0),
+        (m_evon, Σ_evon, "EVON", :red, :solid, 3.),
+        (m_nd, Σ_nd, "NaturalDescent (LieGroups)", :limegreen, :dash, 3.),
+        (m_ivon, Σ_ivon, "IVON", :deepskyblue, :solid, 3.),
     )
         ex, ey = ellipse(m, Σ)
         plot!(plt, ex, ey; color=col, lw=lw, linestyle=ls, label=lab)
         scatter!(plt, [m[1]], [m[2]]; color=col, ms=5, markerstrokewidth=0, label="")
     end
 
-    out = joinpath(@__DIR__, "figures", "logistic_regression.png")
+    out = joinpath("scripts", "figures", "logistic_regression.png")
     savefig(plt, out)
     println("saved ", out)
     # quick numeric sanity
