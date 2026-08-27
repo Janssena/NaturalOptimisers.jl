@@ -1,5 +1,51 @@
 import Optimisers: @..
 
+"""
+    NaturalDescent(η, β = (0.9, 0.99); tau = 1, scale = 1, meanfield = true, manifold = LieGroupManifold())
+
+Natural-gradient descent on a Gaussian variational posterior `q` over the model
+weights — the Bayesian Learning Rule (BLR) of Khan & Rue (2023). Instead of a
+point estimate, it learns a mean and a scale/covariance by descending the
+variational objective `L(q) = τ⁻¹·Eq[ℓ(θ)] + KL(q ‖ p)` along the natural
+gradient, using Adam-like momentum computed in the tangent space.
+
+The scale parameter is kept valid (positive-definite covariance) by choosing a
+`manifold`, each of which parameterises and retracts the scale differently:
+
+- [`LieGroupManifold`](@ref) — Cholesky scale `L`, updated by the affine
+  Lie-group exponential map (Kıral et al., 2023). *Default.*
+- [`RiemannianManifold`](@ref) — precision `S = Σ⁻¹`, updated along Sym⁺(d)
+  geodesics with a second-order correction (Lin et al., 2020).
+- [`EuclidianManifold`](@ref) — Euclidean/Cholesky natural gradient with an
+  inverse-link (softplus) scale constraint (Khan et al., 2018).
+
+Set `meanfield=true` for a diagonal (`DiagNormal`) posterior or `meanfield=false`
+for a full-covariance (`FullNormal`) one. Both recover the exact Gaussian
+posterior on a quadratic target.
+
+Unlike `IVON`/`EVON`, the prior is folded into the loss `ℓ` and the data/entropy
+trade-off is controlled by the temperature `τ ∈ [0, 1]`: `τ = 1` is exact
+Bayesian inference (full entropy pressure), `τ = 0` collapses `q` to a point and
+recovers MAP/gradient-descent optimisation.
+
+# Arguments
+- `η`: learning rate (step size of the manifold retraction).
+- `β = (β₁, β₂)`: decay rates for the natural-momentum EMAs of the mean and
+  scale natural gradients (bias-corrected, Adam-style).
+
+# Keywords
+- `tau`: temperature `τ ∈ [0, 1]` (`1` = pure Bayesian inference, `0` = MAP).
+- `scale`: initial posterior scale (standard deviation for `DiagNormal`); the
+  covariance is initialised isotropically to `scale²·I`.
+- `meanfield`: `true` → diagonal `DiagNormal`, `false` → full `FullNormal`.
+- `manifold`: geometry used to parameterise/retract the scale (see above).
+
+# References
+- Khan & Rue (2023), *The Bayesian Learning Rule*, JMLR.
+- Khan et al. (2018), *Fast and Scalable Bayesian Deep Learning by Weight-Perturbation in Adam* (Euclidean geometry).
+- Lin et al. (2020), *Handling the Positive-Definite Constraint in the Bayesian Learning Rule* (Riemannian geometry).
+- Kıral et al. (2023), *The Lie-Group Bayesian Learning Rule* (Lie-group geometry).
+"""
 struct NaturalDescent{Q<:Distribution,M<:AbstractManifold,T} <: AbstractNaturalRule
     eta::T # learning rate
     beta::NTuple{2,T} # Momentum parameters
@@ -70,6 +116,19 @@ until_leafs(x::Optimisers.Leaf) = true
 
 # Generic over the container (NamedTuple / Tuple / Vector / nested combinations); the
 # `Optimisers.Leaf` methods below are more specific and handle the actual leaves.
+"""
+    update_epsilon!(rng, tree; num_samples = 1)
+
+Refresh the reparameterisation noise stored in every variational leaf of an
+optimiser `tree` (or a single `Optimisers.Leaf`), drawing `num_samples` fresh
+standard-normal arrays per leaf. Each rule's `sample` then reuses these arrays,
+so the *same* noise is shared between drawing weights and the subsequent
+gradient/`apply!` step (the reparameterisation trick).
+
+Called automatically by [`sample`](@ref); call it directly only when driving the
+per-leaf primitives (`natgrad`/`update`) by hand. Non-variational leaves are left
+untouched. Mutates `tree` in place and returns `nothing`.
+"""
 function update_epsilon!(rng, tree; num_samples::Int=1)
     fmap(tree; exclude=until_leafs) do leaf
         update_epsilon!(rng, leaf; num_samples)
@@ -78,7 +137,10 @@ function update_epsilon!(rng, tree; num_samples::Int=1)
     return nothing
 end
 
-update_epsilon!(rng, o::Optimisers.Leaf; kwargs...) = nothing
+# Skip non-Natural rules:
+update_epsilon!(rng, ::Optimisers.Leaf; kwargs...) = nothing
+# Skip parameters without rules (e.g. scalars):
+update_epsilon!(rng, ::Tuple{}; kwargs...) = nothing
 
 function update_epsilon!(rng, o::Optimisers.Leaf{<:AbstractNaturalRule}; num_samples::Int=1)
     dims = size(first(o.state.epsilon))
@@ -92,7 +154,29 @@ function update_epsilon!(rng, o::Optimisers.Leaf{<:AbstractNaturalRule}; num_sam
     return nothing
 end
 
+"""
+    sample(rng, ps, tree; num_samples = 1)
+
+Materialise concrete weights by drawing them from the variational posterior held
+in the optimiser `tree`, returning a copy of the model `ps` with every
+variational leaf replaced by a sample `θ ~ q` and every ordinary leaf (e.g. an
+`Adam`/`AdamW` leaf in a mixed tree) left at its point estimate.
+
+This is the sampling step of the training loop: draw weights, evaluate the loss
+gradient at them with any AD framework, then `Optimisers.update`. Fresh
+reparameterisation noise is drawn first (via [`update_epsilon!`](@ref)) and
+reused by the matching `apply!`.
+
+With `num_samples > 1` a vector of `num_samples` weight trees is returned (for
+Monte-Carlo variance reduction); pair it with a vector of per-sample gradient
+trees and pass that to the multi-sample `Optimisers.update` method below. With
+`num_samples == 1` a single tree is returned.
+
+See also the per-leaf primitive `sample(rule, state, i)`.
+"""
 function sample(rng, ps, tree; num_samples::Int=1)
+    # TODO: should we be copying the tree and returning it as part of the sample output? 
+    # There can be race conditions when doing the below on the same tree in parallel (e.g. when running a predict over multiple samples using the same tree).
     update_epsilon!(rng, tree; num_samples)
 
     # Walk the parameters `ps` and the optimiser-state `tree` in parallel: at each
@@ -101,7 +185,7 @@ function sample(rng, ps, tree; num_samples::Int=1)
     # all others (e.g. an Adam leaf) keep their point estimate `x`.
     ps_new = map(1:num_samples) do m
         return fmap(ps, tree; exclude=until_leafs) do x, leaf
-            if leaf.rule isa AbstractNaturalRule
+            if leaf isa Optimisers.Leaf && leaf.rule isa AbstractNaturalRule
                 return sample(leaf.rule, leaf.state, m)
             else
                 return x
@@ -112,16 +196,34 @@ function sample(rng, ps, tree; num_samples::Int=1)
     return isone(num_samples) ? only(ps_new) : ps_new
 end
 
-# Multi-sample tree update: `grads` is a vector of per-sample gradient trees (as returned
-# by `sample(rng, ps, tree; num_samples)` paired with a loss gradient). Each leaf's rule is
-# applied once with all of its per-sample gradients, so a variational rule receives the full
-# Monte-Carlo batch (its `apply!` averages internally) while ordinary rules get the mean.
-#
 # We do the walk ourselves rather than delegate to `Optimisers.update`, because Optimisers'
 # higher-order method `update(tree, model, grad, higher...)` treats extra gradients as
 # higher-order terms and keeps only the first (`apply!(o, state, x, dx, dxs...) = ... dx`).
 # Dispatching on a `Vector` of structured gradients avoids clashing with the single-gradient
 # `Optimisers.update(tree, model, grad)` (a lone array gradient is not such a vector).
+"""
+    Optimisers.update(tree, ps, grads::AbstractVector)
+
+Multi-sample tree update for Monte-Carlo variational training. `grads` is a
+vector of per-sample gradient trees — one loss gradient per weight sample drawn
+by `sample(rng, ps, tree; num_samples)`. Each leaf's rule is applied once with
+*all* of its per-sample gradients, so a variational rule (`NaturalDescent`,
+`IVON`, `EVON`) receives the full Monte-Carlo batch and averages over it inside
+`apply!`, while ordinary leaves are updated with the mean gradient.
+
+Returns the updated `(tree, ps)`. Neither the caller's state tree nor its
+parameters are mutated (both are copied first, as in `Optimisers.update`); for
+variational leaves the parameter is returned unchanged because the posterior
+lives in the optimiser state. Frozen leaves are skipped.
+
+For the single-sample case use the ordinary `Optimisers.update(tree, ps, grad)`
+with one gradient tree.
+
+# Note
+A model that is a bare `Vector` of arrays is rejected at `setup`, because its
+single gradient (a `Vector{<:AbstractArray}`) is indistinguishable from the
+per-sample batch consumed here. Wrap such a model in a `NamedTuple` or `Tuple`.
+"""
 function Optimisers.update(tree, ps, grads::AbstractVector{<:Union{AbstractArray,Tuple,NamedTuple}})
     # Copy first (as `Optimisers.update` does) so in-place rule updates don't touch the caller's
     # arrays — both the state tree and the parameters may be written to below.
@@ -161,3 +263,14 @@ _vector_model_error() = throw(ErrorException(
     "gradient batch used by the tree-level `Optimisers.update`. Wrap the model in a `NamedTuple` or `Tuple`."))
 
 Optimisers.setup(::AbstractNaturalRule, ::AbstractVector{<:AbstractArray}) = _vector_model_error()
+
+# Need to overload this function in order to pass Q to the constructor:
+function Optimisers._adjust(r::NaturalDescent{Q,M,T}, nt::NamedTuple) where {Q,M,T}
+  isempty(nt) && throw(ArgumentError("adjust must be given something to act on!"))
+  fs = fieldnames(typeof(r))
+  vals = map(fs) do field
+    get(nt, field, getfield(r, field))
+  end
+
+  return NaturalDescent{Q,M,T}(vals...)
+end

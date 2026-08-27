@@ -1,3 +1,7 @@
+abstract type HessianEstimator end
+struct ReparamHessian <: HessianEstimator end   # Ĥ = G° ⊙ Z / √V (default; unbiased)
+struct SquaredGradient <: HessianEstimator end  # Ĥ = G° ⊙ G°      (SOAP/Adam heuristic)
+
 """
 Eigenspace Variational Online Newton (EVON) from "SOAP-Bubbles: Structured Weight
 Uncertainty for Neural Networks" (Minut et al., 2026).
@@ -60,13 +64,12 @@ Construct the EVON optimisation rule.
   Alg. 2 (which uses plain EMAs); IVON's Alg. 1 does debias, so this aligns EVON with IVON when on.
 - `precond_freq`: number of steps `T` between eigenbasis refreshes `Q_L, Q_R ←
   Eig(L), Eig(R)` (line 11).
-"""
-# Compile-time flag (a `Static`-style singleton stored in the struct) selecting EVON's
-# line-4 Hessian estimator, so `apply!` dispatches on it without a runtime branch.
-abstract type HessianEstimator end
-struct ReparamHessian <: HessianEstimator end   # Ĥ = G° ⊙ Z / √V (default; unbiased)
-struct SquaredGradient <: HessianEstimator end  # Ĥ = G° ⊙ G°      (SOAP/Adam heuristic)
 
+# References
+- Minut et al. (2026), *SOAP-Bubbles: Structured Weight Uncertainty for Neural Networks* (EVON).
+- Shen et al. (2024), *Variational Learning is Effective for Large Deep Networks* (IVON, the diagonal base method).
+- Vyas et al. (2025), *SOAP: Improving and Stabilizing Shampoo using Adam* (the Kronecker-factored preconditioner).
+"""
 struct EVON{T,H<:HessianEstimator} <: AbstractNaturalRule
     eta::T              # α, mean learning rate
     beta::NTuple{3,T}   # (β₁ momentum, β₂ Hessian EMA, β₃ preconditioner EMA)
