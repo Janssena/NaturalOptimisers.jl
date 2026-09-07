@@ -141,6 +141,7 @@ end
 update_epsilon!(rng, ::Optimisers.Leaf; kwargs...) = nothing
 # Skip parameters without rules (e.g. scalars):
 update_epsilon!(rng, ::Tuple{}; kwargs...) = nothing
+update_epsilon!(rng, ::Nothing; kwargs...) = nothing
 
 function update_epsilon!(rng, o::Optimisers.Leaf{<:AbstractNaturalRule}; num_samples::Int=1)
     dims = size(first(o.state.epsilon))
