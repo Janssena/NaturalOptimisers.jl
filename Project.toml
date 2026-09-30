@@ -1,6 +1,6 @@
 name = "NaturalOptimisers"
 uuid = "baf65090-2b44-4d11-bff8-c4290875b87f"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["Janssena <alexanderjanssen@live.com>"]
 
 [deps]
