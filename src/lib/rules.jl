@@ -175,26 +175,22 @@ trees and pass that to the multi-sample `Optimisers.update` method below. With
 
 See also the per-leaf primitive `sample(rule, state, i)`.
 """
-function sample(rng, ps, tree; num_samples::Int=1)
-    # TODO: should we be copying the tree and returning it as part of the sample output? 
-    # There can be race conditions when doing the below on the same tree in parallel (e.g. when running a predict over multiple samples using the same tree).
+function sample(rng, ps, _tree; num_samples::Int=1)
+    tree = deepcopy(_tree)
     update_epsilon!(rng, tree; num_samples)
 
-    # Walk the parameters `ps` and the optimiser-state `tree` in parallel: at each
-    # parameter leaf `x` the matching `tree` node is its `Optimisers.Leaf`. Leaves
-    # whose rule is an `AbstractNaturalRule` are replaced by a posterior sample;
-    # all others (e.g. an Adam leaf) keep their point estimate `x`.
     ps_new = map(1:num_samples) do m
-        return fmap(ps, tree; exclude=until_leafs) do x, leaf
-            if leaf isa Optimisers.Leaf && leaf.rule isa AbstractNaturalRule
-                return sample(leaf.rule, leaf.state, m)
+        return fmap(ps, tree; exclude=NaturalOptimisers.until_leafs) do x, leaf
+            # Added a `leaf isa Optimisers.Leaf` check before grabbing the rule
+            if leaf isa Optimisers.Leaf && leaf.rule isa NaturalOptimisers.AbstractNaturalRule
+                return NaturalOptimisers.sample(leaf.rule, leaf.state, m)
             else
                 return x
             end
         end
     end
 
-    return isone(num_samples) ? only(ps_new) : ps_new
+    return isone(num_samples) ? only(ps_new) : ps_new, tree
 end
 
 # We do the walk ourselves rather than delegate to `Optimisers.update`, because Optimisers'
