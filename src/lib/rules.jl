@@ -180,10 +180,9 @@ function sample(rng, ps, _tree; num_samples::Int=1)
     update_epsilon!(rng, tree; num_samples)
 
     ps_new = map(1:num_samples) do m
-        return fmap(ps, tree; exclude=NaturalOptimisers.until_leafs) do x, leaf
-            # Added a `leaf isa Optimisers.Leaf` check before grabbing the rule
-            if leaf isa Optimisers.Leaf && leaf.rule isa NaturalOptimisers.AbstractNaturalRule
-                return NaturalOptimisers.sample(leaf.rule, leaf.state, m)
+        return fmap(ps, tree; exclude=until_leafs) do x, leaf
+            if leaf isa Optimisers.Leaf && leaf.rule isa AbstractNaturalRule
+                return sample(leaf.rule, leaf.state, m)
             else
                 return x
             end
